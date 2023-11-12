@@ -6,55 +6,79 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     return TRUE;
 }
 
-struct ChunkBlockPos {
-    uint8_t x;
-    uint8_t z;
-    int16_t y;
-};
-
-struct Block;
-class LevelChunk;
-
-class LevelChunk {
-    uint8_t gap0[312];
-    int64_t qword138;
-    int64_t qword140;
-
-public:
-    Block* getBlock(ChunkBlockPos* chunkBlockPos) {
-        uint8_t y = chunkBlockPos->y;
-        uint64_t verticalChunkY = y / 16;
-        uint64_t v5 = 96 * verticalChunkY + qword138 + 56;
-
-        if (verticalChunkY < (this->qword140 - this->qword138) / 96 && v5 != 0) {
-            typedef int64_t(__fastcall* FunctionPointer)(int64_t, uint64_t);
-            FunctionPointer* vtable = *reinterpret_cast<FunctionPointer**>(v5);
-            FunctionPointer func = vtable[3];
-
-            return reinterpret_cast<Block*>(func(v5, (y & 0xF) + 16 * (chunkBlockPos->z + 16 * chunkBlockPos->x)));
-        }
-        
-        return nullptr;
-    }
-};
-
 struct BlockPos {
     int x;
     int y;
     int z;
 };
 
-typedef BlockPos* (__thiscall* _levelChunk_getTopRainBlockPos)(void* a1, void* a2, void* a3);
+class ChunkBlockPos {
+public:
+    uint8_t x;
+    uint8_t z;
+    int16_t y;
+
+    ChunkBlockPos(uint8_t x, uint8_t z, int16_t y) {
+        this->x = x;
+        this->z = z;
+        this->y = y;
+    }
+
+    ChunkBlockPos(const BlockPos& pos) {
+        this->x = pos.x % 16;
+        this->z = pos.z % 16;
+        this->y = pos.y;
+    }
+};
+
+struct Block;
+class LevelChunk;
+
+class LevelChunk {
+public:
+    uint8_t gap0[312];
+    uint64_t qword138;
+    uint64_t qword140;
+
+    Block* getBlock(ChunkBlockPos* pos) {
+        uint64_t* qword138 = reinterpret_cast<uint64_t*>(this->qword138);
+        int64_t chunk_y = pos->y / 16;
+
+        // Gets the number of vertical chunks specific to the current dimension
+        uint64_t total_vertical_chunks = 0xAAAAAAAAAAAAAAABui64 * ((this->qword140 - this->qword138) >> 5);
+        Log::Info("total_vertical_chunks: {}\n", total_vertical_chunks);
+
+        qword138 = &qword138[12 * chunk_y + 7];
+        if (chunk_y < total_vertical_chunks && qword140 != 0) {
+            // TODO: x & z could easily be the wrong way round
+            uint16_t index = (pos->y & 0xF) + 16 * (pos->z + 16 * pos->x);
+            Log::Info("index: {}\n", index);
+
+            // This section causes the crash
+            using Function = Block*(__fastcall*)(uint64_t*, uint64_t);
+            auto v16 = *reinterpret_cast<Function*>(*qword138 + 24);
+            return v16(qword138, index);
+        }
+        else {
+            return nullptr;
+        }
+    }
+};
+
+typedef BlockPos& (__thiscall* _levelChunk_getTopRainBlockPos)(void* a1, void* a2, void* a3);
 _levelChunk_getTopRainBlockPos levelChunk_getTopRainBlockPos;
 
-static BlockPos* LevelChunk_getTopRainBlockPos(LevelChunk* a1, ChunkBlockPos* a2, void* a3) {
-    BlockPos* pos = levelChunk_getTopRainBlockPos(a1, a2, a3);
-    if (pos->x > 0 && pos->z > 0 && pos->x < 16 && pos->z < 16) {
-        Log::Info("{} {} -> {}\n", pos->x, pos->z, pos->y);
-        //bool is_null = a1->getBlock(a2) == nullptr;
-        //Log::Info("{} {} -> {} {}\n", pos->x, pos->z, pos->y, is_null);
+static BlockPos& LevelChunk_getTopRainBlockPos(LevelChunk* a1, ChunkBlockPos* a2, void* a3) {
+    BlockPos& pos = levelChunk_getTopRainBlockPos(a1, a2, a3);
+
+    if (pos.x > 0 && pos.z > 0 && pos.x < 16 && pos.z < 16) {
+        ChunkBlockPos chunk_pos(pos);
+        a1->getBlock(&chunk_pos);
     }
+
+    //Log::Info("{} {} {}\n", a1->qword138, a1->qword140, (a1->qword140 - a1->qword138) >> 5);
     return pos;
+
 }
 
 extern "C" __declspec(dllexport) void ModInitializeHooks() {
